@@ -25,8 +25,27 @@ let ocrWorker=null;
 async function recognizeImage(file){if(!window.Tesseract)throw Error('Offline OCR-bestanden zijn nog niet geïnstalleerd. Probeer later opnieuw.');
 if(!ocrWorker){ocrWorker=await Tesseract.createWorker('nld+eng',1,{workerPath:'./vendor/ocr/worker.min.js',corePath:'./vendor/core',langPath:'./vendor/lang',workerBlobURL:false,gzip:true});}
 let result=await ocrWorker.recognize(file);return result.data.text||'';}
+async function scanPdf(file){
+if(!window.pdfjsLib)throw Error('PDF-module nog niet geladen. Wacht tot GitHub de update heeft gepubliceerd.');
+pdfjsLib.GlobalWorkerOptions.workerSrc='./vendor/pdf/pdf.worker.min.js';
+let doc=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+if(doc.numPages>12)throw Error('Deze PDF heeft meer dan 12 pagina’s. Splits het document eerst.');
+let pages=[];
+for(let i=1;i<=doc.numPages;i++){
+let page=await doc.getPage(i);
+let content=await page.getTextContent();
+let extracted=content.items.map(x=>x.str||'').join(' ');
+if(extracted.length>80){pages.push(extracted);continue}
+let viewport=page.getViewport({scale:2}),canvas=document.createElement('canvas');
+canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
+let ctx=canvas.getContext('2d',{alpha:false});await page.render({canvasContext:ctx,viewport}).promise;
+let blob=await new Promise(ok=>canvas.toBlob(ok,'image/png'));if(!blob)throw Error('Kan PDF-pagina niet omzetten');
+pages.push(await recognizeImage(blob));canvas.width=0;canvas.height=0;
+}
+return guess(pages.join('\n'));
+}
 async function extract(file){if(file.size>12*1024*1024)throw Error('Bestand is groter dan 12 MB');
-if(file.type==='application/pdf'||/\\.pdf$/i.test(file.name))return guess(await pdf(file));
+if(file.type==='application/pdf'||/\.pdf$/i.test(file.name))return scanPdf(file);
 if(file.type.startsWith('image/')){let t=await recognizeImage(file);if(t.trim().length<10)throw Error('Geen leesbare tekst gevonden. Maak een scherpere foto.');return guess(t)}
 throw Error('Gebruik PDF, JPG of PNG')}
 function attach(buy,arr,save,render){let add=document.getElementById('add');if(!add||document.getElementById('scanbox'))return;let box=document.createElement('div');box.id='scanbox';box.innerHTML='<p><label>Factuur lokaal analyseren (PDF/JPG/PNG)<input id="invoice-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label></p><small>Bestand blijft op je iPhone. Controleer alle bedragen vóór opslaan. OCR wordt lokaal uitgevoerd, zonder upload naar een server.</small><div id="scan-status" aria-live="polite"></div>';add.insertAdjacentElement('afterend',box);
