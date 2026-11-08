@@ -34,16 +34,29 @@ for(let i=0;i<lines.length;i++){
     else if(next.length===1)vatCandidates.push(next[0].value);
   }
 }
+// Dutch invoice summary: OCR frequently puts net, VAT and gross on one row.
+const triples=[];
+for(let i=0;i<lines.length;i++){
+ const line=lines[i],vals=numbers(line).map(x=>x.value);
+ const context=(lines[i-1]||'')+' '+line;
+ const summaryContext=/(?:subtotaal\s+btw\s+totaal|excl\.?\s*btw\s+btw\s*bedrag|netto\s*(?:sub)?totaalbedrag)/i.test(context);
+ const dateRow=/(?:verzenddatum|factuurdatum|invoice\s*date)/i.test(line);
+ if(vals.length>=3&&(summaryContext||dateRow)){
+  const tail=vals.slice(-3);
+  if(tail[0]>0&&tail[1]>=0&&Math.abs(tail[0]+tail[1]-tail[2])<0.025)triples.push(tail);
+ }
+}
 let gross=null,net=null,vat=null;
+if(triples.length===1){[net,vat,gross]=triples[0]}
 outer: for(let g of grossCandidates)for(let n of netCandidates)for(let v of vatCandidates){
-  if(g>0&&n>=0&&v>=0&&Math.abs(g-n-v)<0.025){gross=g;net=n;vat=v;break outer}
+  if(gross===null&&g>0&&n>=0&&v>=0&&Math.abs(g-n-v)<0.025){gross=g;net=n;vat=v;break outer}
 }
 if(gross===null&&netCandidates.length===1&&vatCandidates.length===1&&grossCandidates.length===0){
  net=netCandidates[0];vat=vatCandidates[0];gross=Math.round((net+vat)*100)/100;
 }
 if(gross===null||vat===null||net===null||gross<=0||vat<0){
  let err=Error('Factuurtotaal, exclusief btw en btw konden niet betrouwbaar worden gecontroleerd.');
- err.ocrText=whole;err.candidates={grossCandidates,netCandidates,vatCandidates};throw err;
+ err.ocrText=whole;err.candidates={grossCandidates,netCandidates,vatCandidates,triples};throw err;
 }
 let rate=net>0?Math.round(vat/net*100):0;if(![0,9,21].includes(rate))rate=null;
 return {date,number,gross,vat,net,rate,party:lines.slice(0,7).find(l=>/bambu\s*lab|jingdong|anycubic/i.test(l))||'',description:'Factuur '+(number||''),text:whole};
@@ -78,6 +91,6 @@ if(file.type==='application/pdf'||/\.pdf$/i.test(file.name))return scanPdf(file)
 if(file.type.startsWith('image/')){let t=await recognizeImage(file);if(t.trim().length<10)throw Error('Geen leesbare tekst gevonden. Maak een scherpere foto.');return guess(t)}
 throw Error('Gebruik PDF, JPG of PNG')}
 function attach(buy,arr,save,render){let add=document.getElementById('add');if(!add||document.getElementById('scanbox'))return;let box=document.createElement('div');box.id='scanbox';box.innerHTML='<p><label>Factuur lokaal analyseren (PDF/JPG/PNG)<input id="invoice-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label></p><small>Bestand blijft op je iPhone. Controleer alle bedragen vóór opslaan. OCR wordt lokaal uitgevoerd, zonder upload naar een server.</small><div id="scan-status" aria-live="polite"></div>';add.insertAdjacentElement('afterend',box);
-box.querySelector('input').onchange=async e=>{let f=e.target.files[0];if(!f)return;let status=box.querySelector('#scan-status');status.textContent='Factuur lokaal analyseren…';try{let d=await extract(f);status.textContent='Controleer de voorgestelde gegevens. De factuur zelf wordt niet opgeslagen.';document.getElementById('form').innerHTML='<form id="invoice-approve"><label>Datum<input name="date" type="date" required value="'+(d.date||'')+'"></label><label>'+(buy?'Leverancier':'Klant')+'<input name="party" required></label><label>Factuurnummer<input name="number"></label><label>Omschrijving<input name="description" required></label><label>Totaal incl. btw<input name="gross" type="number" min="0.01" step="0.01" required></label><label>Btw-bedrag<input name="vat" type="number" min="0" step="0.01" required></label><label>Betaalwijze<input name="payment" value="bunq zakelijk"></label><p><button>Goedkeuren en opslaan</button></p></form>';let form=document.getElementById('invoice-approve');for(let k of ['party','number','description','gross','vat'])form.elements[k].value=d[k]??'';form.onsubmit=async ev=>{ev.preventDefault();let a=new FormData(form),gross=round(a.get('gross')),vat=round(a.get('vat'));if(vat>gross)return alert('Btw kan niet hoger zijn dan totaal');let number=String(a.get('number')||'').trim(),party=String(a.get('party')||'').trim();if(number&&arr.some(x=>x.number===number&&x.party===party))return alert('Mogelijke dubbele factuur: zelfde nummer en relatie');arr.push({id:crypto.randomUUID(),date:a.get('date'),party,number,description:a.get('description'),gross,vat,net:round(gross-vat),payment:a.get('payment'),source:'lokale-factuurherkenning'});await save();render()}}catch(err){status.textContent='Niet automatisch herkend: '+err.message+' Gebruik + Nieuw voor handmatige invoer.';if(err.ocrText){let details=document.createElement('details');let summary=document.createElement('summary');summary.textContent='Bekijk lokaal herkende tekst en bedragen';let pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:300px;overflow:auto;background:#f4efe6;padding:10px;border-radius:8px';pre.textContent='Gevonden bedragen: '+JSON.stringify(err.candidates)+'\n\n'+err.ocrText;details.append(summary,pre);status.appendChild(details);}}}}
+box.querySelector('input').onchange=async e=>{let f=e.target.files[0];if(!f)return;let status=box.querySelector('#scan-status');document.getElementById('form').replaceChildren();status.textContent='Factuur lokaal analyseren…';try{let d=await extract(f);status.textContent='Controleer de voorgestelde gegevens. De factuur zelf wordt niet opgeslagen.';document.getElementById('form').innerHTML='<form id="invoice-approve"><label>Datum<input name="date" type="date" required value="'+(d.date||'')+'"></label><label>'+(buy?'Leverancier':'Klant')+'<input name="party" required></label><label>Factuurnummer<input name="number"></label><label>Omschrijving<input name="description" required></label><label>Totaal incl. btw<input name="gross" type="number" min="0.01" step="0.01" required></label><label>Btw-bedrag<input name="vat" type="number" min="0" step="0.01" required></label><label>Betaalwijze<input name="payment" value="bunq zakelijk"></label><p><button>Goedkeuren en opslaan</button></p></form>';let form=document.getElementById('invoice-approve');for(let k of ['party','number','description','gross','vat'])form.elements[k].value=d[k]??'';form.onsubmit=async ev=>{ev.preventDefault();let a=new FormData(form),gross=round(a.get('gross')),vat=round(a.get('vat'));if(vat>gross)return alert('Btw kan niet hoger zijn dan totaal');let number=String(a.get('number')||'').trim(),party=String(a.get('party')||'').trim();if(number&&arr.some(x=>x.number===number&&x.party===party))return alert('Mogelijke dubbele factuur: zelfde nummer en relatie');arr.push({id:crypto.randomUUID(),date:a.get('date'),party,number,description:a.get('description'),gross,vat,net:round(gross-vat),payment:a.get('payment'),source:'lokale-factuurherkenning'});await save();render()}}catch(err){status.textContent='Niet automatisch herkend: '+err.message+' Gebruik + Nieuw voor handmatige invoer.';if(err.ocrText){let details=document.createElement('details');let summary=document.createElement('summary');summary.textContent='Bekijk lokaal herkende tekst en bedragen';let pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:300px;overflow:auto;background:#f4efe6;padding:10px;border-radius:8px';pre.textContent='Gevonden bedragen: '+JSON.stringify(err.candidates)+'\n\n'+err.ocrText;details.append(summary,pre);status.appendChild(details);}}}}
 return {attach};
 })();
