@@ -1,0 +1,34 @@
+name: Bundle offline OCR assets
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/offline-ocr.yml'
+permissions:
+  contents: write
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Download and bundle Tesseract OCR
+        run: |
+          npm install --no-save tesseract.js@5 tesseract.js-core@5
+          mkdir -p vendor/ocr vendor/core vendor/lang
+          cp node_modules/tesseract.js/dist/tesseract.min.js vendor/ocr/tesseract.min.js
+          cp node_modules/tesseract.js/src/worker-script/node/index.js /tmp/ignore-worker-node 2>/dev/null || true
+          cp node_modules/tesseract.js/dist/worker.min.js vendor/ocr/worker.min.js
+          cp node_modules/tesseract.js-core/tesseract-core*.wasm.js vendor/core/
+          cp node_modules/tesseract.js-core/tesseract-core*.wasm vendor/core/
+          curl --fail --location --retry 3 https://github.com/naptha/tessdata/raw/gh-pages/4.0.0_best_int/nld.traineddata.gz -o vendor/lang/nld.traineddata.gz || curl --fail --location --retry 3 https://tessdata.projectnaptha.com/4.0.0/nld.traineddata.gz -o vendor/lang/nld.traineddata.gz
+          curl --fail --location --retry 3 https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz -o vendor/lang/eng.traineddata.gz
+      - name: Commit OCR files
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add vendor
+          git commit -m "Bundle OCR engine for offline private recognition" || exit 0
+          git push
