@@ -30,5 +30,15 @@ jobs:
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
           git add vendor
-          git commit -m "Bundle OCR engine for offline private recognition" || exit 0
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "Bundle OCR engine for offline private recognition"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Unable to push OCR assets after retries" >&2
+          exit 1
