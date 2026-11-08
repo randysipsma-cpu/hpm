@@ -2,9 +2,10 @@
 window.HPMChatImport={
  mount({data,save,render,initial}){
   const root=document.getElementById('view');
-  root.innerHTML='<div class="card"><h2>HPM Factuurassistent</h2><p>Plak de JSON die je in de aparte ChatGPT-chat hebt gecontroleerd. Er wordt niets naar GitHub verstuurd.</p><label>Gecontroleerde factuurgegevens<textarea id="hpm-chat-json" rows="12" style="width:100%;box-sizing:border-box;font:13px monospace;padding:12px"></textarea></label><p><button id="hpm-chat-check">Controleer import</button></p><div id="hpm-chat-result" aria-live="polite"></div></div>';
+  root.innerHTML='<div class="card"><h2>HPM Factuurassistent</h2><p>Plak de JSON die je in de aparte ChatGPT-chat hebt gecontroleerd. Er wordt niets naar GitHub verstuurd.</p><label>Gecontroleerde factuurgegevens<textarea id="hpm-chat-json" rows="12" style="width:100%;box-sizing:border-box;font:13px monospace;padding:12px"></textarea></label><p><button id="hpm-chat-paste" type="button">Plakken vanaf klembord</button> <button id="hpm-chat-check">Controleer import</button></p><div id="hpm-chat-result" aria-live="polite"></div></div>';
   const input=root.querySelector('#hpm-chat-json'),result=root.querySelector('#hpm-chat-result');
   if(initial){input.value=JSON.stringify(initial,null,2);const note=document.createElement('p');note.textContent='Importlink ontvangen. Controleer de factuur voordat je deze opslaat.';root.insertBefore(note,root.firstChild)}
+  root.querySelector('#hpm-chat-paste').onclick=async()=>{try{input.value=await navigator.clipboard.readText();input.focus()}catch(e){result.textContent='Klembord niet toegankelijk. Houd het tekstvak ingedrukt en kies Plak.'}};
   root.querySelector('#hpm-chat-check').onclick=()=>{
    result.replaceChildren();
    try{
