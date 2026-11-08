@@ -11,8 +11,26 @@ let number=(whole.match(/(?:factuurnummer|factuurnr\.?|invoice\s*(?:number|no\.?
 function amount(re){for(let l of lines){if(re.test(l)){let n=numbers(l);if(n.length)return n[n.length-1].value}}return null}
 let gross=amount(/(?:grand\s*total|net\s*payment|amount\s*due|total\s*payable|totaal\s*(?:incl(?:usief)?\s*(?:btw)?|te\s*betalen)|total\s*incl(?:uding)?\s*(?:vat|tax))/i);
 let net=amount(/(?:total\s*exclude\s*tax|total\s*excl(?:uding)?\s*(?:vat|tax)|totaal\s*excl(?:usief)?\s*btw|net\s*amount)/i);
-let vat=amount(/^(?:tax|btw(?:\\s*bedrag)?|vat(?:\\s*amount)?)\\b(?!.*(?:invoice|factuur))(?=.*(?:€\\s*\\d|\\d+[.,]\\d{2}))/i);
-if(vat===null)vat=amount(/(?:total\s*tax|btw\s*totaal|vat\s*total)/i);
+let vat=null;
+for(let i=0;i<lines.length;i++){
+  const line=lines[i];
+  // Tax summary may be preceded by other OCR text and the amount may wrap.
+  const taxLabel=/(?:^|[\s!;])(?:tax|vat|btw)\b/i.test(line);
+  const summary=/(?:total\s*tax|btw\s*totaal|vat\s*total)/i.test(line);
+  const itemRow=/(?:sku:|items\s+qty|price\s+product|subtotal|subtotaal|total\s+exclude)/i.test(line);
+  if(!(taxLabel||summary)||itemRow)continue;
+  const matches=numbers(line);
+  if(matches.length){
+    // Ignore product rows with multiple amounts.
+    if(matches.length===1){vat=matches[0].value;break}
+    continue;
+  }
+  const next=lines[i+1]||'';
+  const nextAmounts=numbers(next);
+  if(nextAmounts.length===1 && /^(?:€\s*)?\d+[.,]\d{2}\s*$/.test(next)){
+    vat=nextAmounts[0].value;break;
+  }
+}
 if(gross===null&&net!==null&&vat!==null)gross=Math.round((net+vat)*100)/100;
 if(net===null&&gross!==null&&vat!==null)net=Math.round((gross-vat)*100)/100;
 if(gross===null||vat===null||net===null||gross<=0||vat<0||Math.abs(gross-net-vat)>0.03){let err=Error('Factuurtotaal, exclusief btw en btw konden niet betrouwbaar worden gecontroleerd.');err.ocrText=whole;err.candidates={gross,net,vat};throw err;}
