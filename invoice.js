@@ -11,7 +11,7 @@ let number=(whole.match(/(?:factuurnummer|factuurnr\.?|invoice\s*(?:number|no\.?
 function amount(re){for(let l of lines){if(re.test(l)){let n=numbers(l);if(n.length)return n[n.length-1].value}}return null}
 let gross=amount(/(?:grand\s*total|net\s*payment|amount\s*due|total\s*payable|totaal\s*(?:incl(?:usief)?\s*(?:btw)?|te\s*betalen)|total\s*incl(?:uding)?\s*(?:vat|tax))/i);
 let net=amount(/(?:total\s*exclude\s*tax|total\s*excl(?:uding)?\s*(?:vat|tax)|totaal\s*excl(?:usief)?\s*btw|net\s*amount)/i);
-let vat=amount(/^(?:tax|btw(?:\s*bedrag)?|vat(?:\s*amount)?)\s*(?:[:€]|$)/i);
+let vat=amount(/^(?:tax|btw(?:\\s*bedrag)?|vat(?:\\s*amount)?)\\b(?!.*(?:invoice|factuur))(?=.*(?:€\\s*\\d|\\d+[.,]\\d{2}))/i);
 if(vat===null)vat=amount(/(?:total\s*tax|btw\s*totaal|vat\s*total)/i);
 if(gross===null&&net!==null&&vat!==null)gross=Math.round((net+vat)*100)/100;
 if(net===null&&gross!==null&&vat!==null)net=Math.round((gross-vat)*100)/100;
