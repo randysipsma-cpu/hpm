@@ -7,7 +7,15 @@ function guess(text){
 let lines=text.split(/\r?\n/).map(txt).filter(Boolean),whole=lines.join('\n');
 let date=(whole.match(/(?:factuurdatum|invoice\s*date|datum)\s*[:#-]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{4}-\d{2}-\d{2})/i)||whole.match(/\b(\d{4}-\d{2}-\d{2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/)||[])[1]||'';
 if(date&&!/^\d{4}-/.test(date)){let p=date.split(/[-/.]/);date=p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0')}
-let number=(whole.match(/(?:factuurnummer|factuurnr\.?|invoice\s*(?:number|no\.?|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})/i)||[])[1]||'';
+let number='';
+for(let i=0;i<lines.length;i++){
+ let m=lines[i].match(/(?:factuurnummer|factuurnr\.?|invoice\s*(?:number|no\.?|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})/i);
+ if(m&&!/^(?:factuurdatum|invoice|date|datum|number|nummer|btw|vat)$/i.test(m[1])){number=m[1];break}
+}
+if(!number&&/123[- ]?3d/i.test(whole)){
+ let m=whole.match(/\b\d{5,8}\s+(\d{6,10})\s+\d{2}[-/.]\d{2}[-/.]\d{4}/);
+ if(m)number=m[1];
+}
 function amount(re){for(let l of lines){if(re.test(l)){let n=numbers(l);if(n.length)return n[n.length-1].value}}return null}
 // Prefer labelled invoice totals over outstanding balance or line-item values.
 function labelled(re, {allowNext=true,positive=false}={}){
@@ -59,7 +67,7 @@ if(gross===null||vat===null||net===null||gross<=0||vat<0){
  err.ocrText=whole;err.candidates={grossCandidates,netCandidates,vatCandidates,triples};throw err;
 }
 let rate=net>0?Math.round(vat/net*100):0;if(![0,9,21].includes(rate))rate=null;
-return {date,number,gross,vat,net,rate,party:lines.slice(0,7).find(l=>/bambu\s*lab|jingdong|anycubic/i.test(l))||'',description:'Factuur '+(number||''),text:whole};
+return {date,number,gross,vat,net,rate,party:(/123[- ]?3d/i.test(whole)?'123 3D B.V.':/bambu\s*lab/i.test(whole)?'Bambu Lab':/jingdong/i.test(whole)?'JINGDONG RETAIL (NETHERLANDS) B.V.':/anycubic/i.test(whole)?'Anycubic':''),description:(/Bambu\s+Lab\s+AMS/i.test(whole)?'Bambu Lab AMS – Automatic Material System + verzendkosten':number?'Factuur '+number:'Inkoopfactuur'),text:whole};
 }
 async function pdf(file){let b=new Uint8Array(await file.arrayBuffer()),raw=new TextDecoder('latin1').decode(b);if(!raw.startsWith('%PDF'))throw Error('Geen geldig PDF-bestand');let fragments=[];let streams=[...raw.matchAll(/stream\r?\n/g)];for(let m of streams){let start=m.index+m[0].length,end=raw.indexOf('endstream',start);if(end<0)continue;let head=raw.slice(Math.max(0,m.index-250),m.index),bytes=b.slice(start,end-(raw[end-1]==='\n'?1:0));try{if(/\/FlateDecode/.test(head)){if(!('DecompressionStream'in window))continue;let ds=new DecompressionStream('deflate');bytes=new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer())}let s=new TextDecoder('latin1').decode(bytes);for(let match of s.matchAll(/\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ/g)){let part=match[0];let strings=[...part.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map(x=>x[1].replace(/\\([()\\])/g,'$1').replace(/\\n/g,' '));if(strings.length)fragments.push(strings.join(''))}}catch(e){}}
 let t=fragments.join('\n');if(t.length<15)throw Error('Deze PDF bevat geen eenvoudig uitleesbare tekst. Gescan­de PDF’s en sommige lettertypen vereisen OCR.');return t}
