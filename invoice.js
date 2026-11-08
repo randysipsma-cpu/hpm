@@ -2,14 +2,23 @@
 /* Entirely local extraction. No requests, no analytics, no remote OCR. */
 const InvoiceScan=(()=>{
 const txt=x=>String(x||'').replace(/\s+/g,' ').trim();
-function numbers(str){return [...str.matchAll(/(?:€\s*)?(-?\d{1,3}(?:[. ]\d{3})*,\d{2}|-?\d+\.\d{2})(?!\d)/g)].map(m=>({value:Number(m[1].replace(/\s/g,'').replace(/\./g,'').replace(',','.')),raw:m[0]})).filter(x=>Number.isFinite(x.value))}
-function guess(text){let lines=text.split(/\r?\n/).map(txt).filter(Boolean),whole=lines.join('\n');let date=(whole.match(/(?:factuurdatum|invoice date|datum)\s*[:#-]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{4}-\d{2}-\d{2})/i)||whole.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{4}-\d{2}-\d{2})\b/)||[])[1]||'';if(date&&!/^\d{4}-/.test(date)){let p=date.split(/[-/.]/);date=p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0')}
+function numbers(str){return [...String(str).matchAll(/(?:€\s*)?(-?(?:\d{1,3}(?:[., ]\d{3})+|\d+)[.,]\d{2})(?!\d)/g)].map(m=>{let raw=m[1].replace(/\s/g,''),last=Math.max(raw.lastIndexOf(','),raw.lastIndexOf('.')),value=Number(raw.slice(0,last).replace(/[.,]/g,'')+'.'+raw.slice(last+1));return {value,raw:m[0]}}).filter(x=>Number.isFinite(x.value))}
+function guess(text){
+let lines=text.split(/\r?\n/).map(txt).filter(Boolean),whole=lines.join('\n');
+let date=(whole.match(/(?:factuurdatum|invoice\s*date|datum)\s*[:#-]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{4}-\d{2}-\d{2})/i)||whole.match(/\b(\d{4}-\d{2}-\d{2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/)||[])[1]||'';
+if(date&&!/^\d{4}-/.test(date)){let p=date.split(/[-/.]/);date=p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0')}
 let number=(whole.match(/(?:factuurnummer|factuurnr\.?|invoice\s*(?:number|no\.?|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})/i)||[])[1]||'';
 function amount(re){for(let l of lines){if(re.test(l)){let n=numbers(l);if(n.length)return n[n.length-1].value}}return null}
-let gross=amount(/(?:totaal\s*(?:te\s*betalen|incl|bedrag)?|total\s*(?:due|incl)?|amount\s*due)/i),vat=amount(/(?:btw\s*(?:bedrag|21%|9%)?|vat\s*(?:amount|21%|9%)?)/i),net=amount(/(?:excl\.?\s*btw|subtotal|subtotaal|netto)/i);
-if(gross===null){let vals=numbers(whole).map(x=>x.value).filter(n=>n>0);gross=vals.length?Math.max(...vals):null}
-let rate=vat!==null&&net>0?Math.round(vat/net*100):21;if(![0,9,21].includes(rate))rate=21;
-return {date,number,gross,vat,net,rate,party:lines.slice(0,4).find(l=>/[a-z]{3}/i.test(l)&&!/(factuur|invoice|datum|date)/i.test(l))||'',description:'Factuur '+(number||''),text:whole};}
+let gross=amount(/(?:grand\s*total|net\s*payment|amount\s*due|total\s*payable|totaal\s*(?:incl(?:usief)?\s*(?:btw)?|te\s*betalen)|total\s*incl(?:uding)?\s*(?:vat|tax))/i);
+let net=amount(/(?:total\s*exclude\s*tax|total\s*excl(?:uding)?\s*(?:vat|tax)|totaal\s*excl(?:usief)?\s*btw|net\s*amount)/i);
+let vat=amount(/^(?:tax|btw(?:\s*bedrag)?|vat(?:\s*amount)?)\s*(?:[:€]|$)/i);
+if(vat===null)vat=amount(/(?:total\s*tax|btw\s*totaal|vat\s*total)/i);
+if(gross===null&&net!==null&&vat!==null)gross=Math.round((net+vat)*100)/100;
+if(net===null&&gross!==null&&vat!==null)net=Math.round((gross-vat)*100)/100;
+if(gross===null||vat===null||net===null||gross<=0||vat<0||Math.abs(gross-net-vat)>0.03)throw Error('Factuurtotaal, exclusief btw en btw konden niet betrouwbaar worden gecontroleerd. Vul de bedragen handmatig in.');
+let rate=net>0?Math.round(vat/net*100):0;if(![0,9,21].includes(rate))rate=null;
+return {date,number,gross,vat,net,rate,party:lines.slice(0,7).find(l=>/bambu\s*lab|jingdong|anycubic/i.test(l))||'',description:'Factuur '+(number||''),text:whole};
+}
 async function pdf(file){let b=new Uint8Array(await file.arrayBuffer()),raw=new TextDecoder('latin1').decode(b);if(!raw.startsWith('%PDF'))throw Error('Geen geldig PDF-bestand');let fragments=[];let streams=[...raw.matchAll(/stream\r?\n/g)];for(let m of streams){let start=m.index+m[0].length,end=raw.indexOf('endstream',start);if(end<0)continue;let head=raw.slice(Math.max(0,m.index-250),m.index),bytes=b.slice(start,end-(raw[end-1]==='\n'?1:0));try{if(/\/FlateDecode/.test(head)){if(!('DecompressionStream'in window))continue;let ds=new DecompressionStream('deflate');bytes=new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer())}let s=new TextDecoder('latin1').decode(bytes);for(let match of s.matchAll(/\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ/g)){let part=match[0];let strings=[...part.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map(x=>x[1].replace(/\\([()\\])/g,'$1').replace(/\\n/g,' '));if(strings.length)fragments.push(strings.join(''))}}catch(e){}}
 let t=fragments.join('\n');if(t.length<15)throw Error('Deze PDF bevat geen eenvoudig uitleesbare tekst. Gescan­de PDF’s en sommige lettertypen vereisen OCR.');return t}
 let ocrWorker=null;
