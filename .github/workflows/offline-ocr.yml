@@ -16,8 +16,10 @@ jobs:
           node-version: '20'
       - name: Download and bundle Tesseract OCR
         run: |
-          npm install --no-save tesseract.js@5 tesseract.js-core@5
-          mkdir -p vendor/ocr vendor/core vendor/lang
+          npm install --no-save tesseract.js@5 tesseract.js-core@5 pdfjs-dist@3.11.174
+          mkdir -p vendor/ocr vendor/core vendor/lang vendor/pdf
+          cp node_modules/pdfjs-dist/build/pdf.min.js vendor/pdf/pdf.min.js
+          cp node_modules/pdfjs-dist/build/pdf.worker.min.js vendor/pdf/pdf.worker.min.js
           cp node_modules/tesseract.js/dist/tesseract.min.js vendor/ocr/tesseract.min.js
           cp node_modules/tesseract.js/src/worker-script/node/index.js /tmp/ignore-worker-node 2>/dev/null || true
           cp node_modules/tesseract.js/dist/worker.min.js vendor/ocr/worker.min.js
