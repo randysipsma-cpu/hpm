@@ -9,31 +9,42 @@ let date=(whole.match(/(?:factuurdatum|invoice\s*date|datum)\s*[:#-]?\s*(\d{1,2}
 if(date&&!/^\d{4}-/.test(date)){let p=date.split(/[-/.]/);date=p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0')}
 let number=(whole.match(/(?:factuurnummer|factuurnr\.?|invoice\s*(?:number|no\.?|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})/i)||[])[1]||'';
 function amount(re){for(let l of lines){if(re.test(l)){let n=numbers(l);if(n.length)return n[n.length-1].value}}return null}
-let gross=amount(/(?:grand\s*total|net\s*payment|amount\s*due|total\s*payable|totaal\s*(?:incl(?:usief)?\s*(?:btw)?|te\s*betalen)|total\s*incl(?:uding)?\s*(?:vat|tax))/i);
-let net=amount(/(?:total\s*exclude\s*tax|total\s*excl(?:uding)?\s*(?:vat|tax)|totaal\s*excl(?:usief)?\s*btw|net\s*amount)/i);
-let vat=null;
-for(let i=0;i<lines.length;i++){
-  const line=lines[i];
-  // Tax summary may be preceded by other OCR text and the amount may wrap.
-  const taxLabel=/(?:^|[\s!;])(?:tax|vat|btw)\b/i.test(line);
-  const summary=/(?:total\s*tax|btw\s*totaal|vat\s*total)/i.test(line);
-  const itemRow=/(?:sku:|items\s+qty|price\s+product|subtotal|subtotaal|total\s+exclude)/i.test(line);
-  if(!(taxLabel||summary)||itemRow)continue;
-  const matches=numbers(line);
-  if(matches.length){
-    // Ignore product rows with multiple amounts.
-    if(matches.length===1){vat=matches[0].value;break}
-    continue;
+// Prefer labelled invoice totals over outstanding balance or line-item values.
+function labelled(re, {allowNext=true,positive=false}={}){
+  let found=[];
+  for(let i=0;i<lines.length;i++){
+    if(!re.test(lines[i]))continue;
+    let n=numbers(lines[i]);
+    if(n.length===1)found.push(n[0].value);
+    else if(!n.length&&allowNext){
+      let next=lines[i+1]||'',v=numbers(next);
+      if(v.length===1&&/^(?:€\s*)?\d+[.,]\d{2}\s*$/.test(next))found.push(v[0].value);
+    }
   }
-  const next=lines[i+1]||'';
-  const nextAmounts=numbers(next);
-  if(nextAmounts.length===1 && /^(?:€\s*)?\d+[.,]\d{2}\s*$/.test(next)){
-    vat=nextAmounts[0].value;break;
+  return [...new Set(found)].filter(v=>!positive||v>0);
+}
+const grossCandidates=labelled(/(?:grand\s*total|net\s*payment|total\s*amount\s*payable|total\s*\(incl\.?\s*(?:vat|btw)\)|totaal\s*\(incl\.?\s*btw\)|totaal\s*incl(?:usief)?\s*btw|totaal\s*verschuldigd)/i,{positive:true});
+const netCandidates=labelled(/(?:total\s*exclude\s*tax|total\s*excl(?:uding)?\s*(?:vat|tax)|total\s*\(excl\.?\s*(?:vat|btw)\)|totaal\s*\(excl\.?\s*btw\)|totaal\s*excl(?:usief)?\s*btw|netto\s*(?:sub)?totaalbedrag|subtotal\s*net\s*amount)/i);
+const vatCandidates=labelled(/(?:^|[\s!;])(?:tax\s+NL\s+btw|total\s+(?:vat|tax)|total\s+VAT\s+amount\s+payable|totaal\s+verschuldigde\s*btw|btw\s*bedrag|btw-bedrag|vat\s*amount|tax\s*amount)\b/i);
+for(let i=0;i<lines.length;i++){
+  const l=lines[i];
+  if(/(?:^|[\s!;])tax\s+NL\s+btw\s*\(?\s*\d{1,2}%/i.test(l)){
+    let n=numbers(l),next=numbers(lines[i+1]||'');
+    if(n.length===1)vatCandidates.push(n[0].value);
+    else if(next.length===1)vatCandidates.push(next[0].value);
   }
 }
-if(gross===null&&net!==null&&vat!==null)gross=Math.round((net+vat)*100)/100;
-if(net===null&&gross!==null&&vat!==null)net=Math.round((gross-vat)*100)/100;
-if(gross===null||vat===null||net===null||gross<=0||vat<0||Math.abs(gross-net-vat)>0.03){let err=Error('Factuurtotaal, exclusief btw en btw konden niet betrouwbaar worden gecontroleerd.');err.ocrText=whole;err.candidates={gross,net,vat};throw err;}
+let gross=null,net=null,vat=null;
+outer: for(let g of grossCandidates)for(let n of netCandidates)for(let v of vatCandidates){
+  if(g>0&&n>=0&&v>=0&&Math.abs(g-n-v)<0.025){gross=g;net=n;vat=v;break outer}
+}
+if(gross===null&&netCandidates.length===1&&vatCandidates.length===1&&grossCandidates.length===0){
+ net=netCandidates[0];vat=vatCandidates[0];gross=Math.round((net+vat)*100)/100;
+}
+if(gross===null||vat===null||net===null||gross<=0||vat<0){
+ let err=Error('Factuurtotaal, exclusief btw en btw konden niet betrouwbaar worden gecontroleerd.');
+ err.ocrText=whole;err.candidates={grossCandidates,netCandidates,vatCandidates};throw err;
+}
 let rate=net>0?Math.round(vat/net*100):0;if(![0,9,21].includes(rate))rate=null;
 return {date,number,gross,vat,net,rate,party:lines.slice(0,7).find(l=>/bambu\s*lab|jingdong|anycubic/i.test(l))||'',description:'Factuur '+(number||''),text:whole};
 }
