@@ -1,0 +1,5 @@
+ChatGPT ↔ GitHub verbindingstest
+Datum: 2026-11-11
+Repository: randysipsma-cpu/hpm
+Branch: test/chatgpt-cloudflare-check-20261111
+Dit is uitsluitend een testbestand. De boekhoudapp en main-branch zijn niet gewijzigd.
